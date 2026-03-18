@@ -1,112 +1,158 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from __future__ import annotations
 
-from models import Base, NPMeal, NPMealPlan, NPUserProfile, SessionLocal, engine
-from routes import router
+from contextlib import asynccontextmanager
 
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
-app = FastAPI(title="Nutriplan Meal Planning API", version="1.0.0")
-
-Base.metadata.create_all(bind=engine)
-
-
-def seed_data():
-    db = SessionLocal()
-    try:
-        existing = db.query(NPMealPlan).first()
-        if existing:
-            return
-
-        seeds = [
-            ("Alex", 180.0, "cutting", 2200, 200, 220, 65, "High-protein chicken rice bowl day plan"),
-            ("Maya", 135.0, "muscle gain", 2400, 150, 300, 70, "Vegetarian lean bulk meal set"),
-            ("Jordan", 205.0, "maintenance", 2600, 210, 290, 80, "Balanced maintenance athlete plate"),
-        ]
-
-        for name, weight, goal, kcal, p, c, f, title in seeds:
-            user = NPUserProfile(name=name, weight_lb=weight, goal=goal, activity="moderate", diet_style="balanced", exclusions_json="[]")
-            db.add(user)
-            db.flush()
-
-            plan = NPMealPlan(
-                user_id=user.id,
-                title=title,
-                goal=goal,
-                calories_target=kcal,
-                protein_target=p,
-                carbs_target=c,
-                fat_target=f,
-                notes="Seeded demo plan for instant first-load proof.",
-                grocery_json='[{"aisle":"produce","items":["spinach - 200g","banana - 4"]}]',
-            )
-            db.add(plan)
-            db.flush()
-
-            db.add(NPMeal(plan_id=plan.id, slot="breakfast", name="Protein Oats", ingredients_json='["oats","whey","berries"]', aisle_tags_json='["grain","protein","produce"]', prep_minutes=8, portion_label="1 bowl", protein_g=35, carbs_g=55, fat_g=10, calories=450, locked=False))
-            db.add(NPMeal(plan_id=plan.id, slot="lunch", name="Chicken Rice Bowl", ingredients_json='["chicken","rice","broccoli"]', aisle_tags_json='["protein","grain","produce"]', prep_minutes=18, portion_label="1 plate", protein_g=50, carbs_g=70, fat_g=15, calories=615, locked=True))
-            db.add(NPMeal(plan_id=plan.id, slot="dinner", name="Salmon Potato Plate", ingredients_json='["salmon","potato","greens"]', aisle_tags_json='["protein","produce"]', prep_minutes=22, portion_label="1 plate", protein_g=45, carbs_g=60, fat_g=20, calories=600, locked=False))
-
-        db.commit()
-    finally:
-        db.close()
+from database import get_db, get_engine, init_db
+from models import MealPlan
+from planner import (
+    build_grocery_list,
+    build_meal_plan_with_mode,
+    calculate_macros,
+    swap_meal,
+)
+from schemas import (
+    GroceryListResponse,
+    MacroTargets,
+    MealPlanResponse,
+    PlanListResponse,
+    PlannerInput,
+    SavePlanResponse,
+)
 
 
-seed_data()
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    init_db()
+    yield
 
-@app.middleware("http")
-async def normalize_api_prefix(request: Request, call_next):
-    if request.scope.get("path", "").startswith("/api/"):
-        request.scope["path"] = request.scope["path"][4:] or "/"
-    return await call_next(request)
 
-app.include_router(router)
+app = FastAPI(title="NutriPlan API", version="0.1.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def to_plan_response(plan: MealPlan) -> MealPlanResponse:
+    return MealPlanResponse(
+        id=plan.id,
+        created_at=plan.created_at,
+        updated_at=plan.updated_at,
+        weight=plan.weight,
+        unit=plan.unit,
+        goal=plan.goal,
+        dietary_restrictions=plan.dietary_restrictions,
+        meal_count=plan.meal_count,
+        calories=plan.calories,
+        protein_g=plan.protein_g,
+        carbs_g=plan.carbs_g,
+        fat_g=plan.fat_g,
+        generator_mode=plan.generator_mode,
+        meals=plan.meals,
+        is_saved=plan.is_saved,
+    )
 
 
 @app.get("/health")
-def health():
+def health() -> dict[str, str]:
+    with Session(get_engine()) as db:
+        db.execute(text("SELECT 1"))
     return {"status": "ok"}
 
 
-@app.get("/", response_class=HTMLResponse)
-def root():
-    html = """
-    <html>
-      <head>
-        <title>Nutriplan Meal Planning API</title>
-        <style>
-          body { background:#0f1115; color:#e7f7ee; font-family:Arial, sans-serif; margin:0; padding:24px; }
-          .card { background:#171b22; border:1px solid #26303d; border-radius:12px; padding:16px; margin-bottom:14px; }
-          h1 { color:#7CFF9E; margin-bottom:6px; }
-          a { color:#7CFF9E; text-decoration:none; }
-          code { color:#b6ffd0; }
-          .muted { color:#9fb3a8; }
-        </style>
-      </head>
-      <body>
-        <h1>Nutriplan Meal Planning</h1>
-        <p class='muted'>From body stats to a macro-balanced meal day in one click.</p>
+@app.post("/api/calculate", response_model=MacroTargets)
+def calculate(payload: PlannerInput) -> MacroTargets:
+    return calculate_macros(payload.weight, payload.unit, payload.goal)
 
-        <div class='card'>
-          <h3>Tech Stack</h3>
-          <p>FastAPI 0.115.0 · SQLAlchemy 2.0.35 · Pydantic 2.9.0 · httpx 0.27.0 · PostgreSQL-ready models · DO Serverless Inference</p>
-        </div>
 
-        <div class='card'>
-          <h3>Endpoints</h3>
-          <ul>
-            <li><code>GET /health</code></li>
-            <li><code>GET /demo</code> (also <code>/api/demo</code>)</li>
-            <li><code>POST /macro-target</code> (also <code>/api/macro-target</code>)</li>
-            <li><code>POST /plan</code> (also <code>/api/plan</code>)</li>
-            <li><code>POST /insights</code> (also <code>/api/insights</code>)</li>
-          </ul>
-        </div>
+@app.post("/api/generate-plan", response_model=MealPlanResponse)
+def generate_plan(
+    payload: PlannerInput, db: Session = Depends(get_db)
+) -> MealPlanResponse:
+    macros = calculate_macros(payload.weight, payload.unit, payload.goal)
+    meals, generator_mode = build_meal_plan_with_mode(
+        macros, payload.meal_count, payload.dietary_restrictions
+    )
+    plan = MealPlan(
+        weight=payload.weight,
+        unit=payload.unit,
+        goal=payload.goal,
+        dietary_restrictions=payload.dietary_restrictions,
+        meal_count=payload.meal_count,
+        calories=macros.calories,
+        protein_g=macros.protein_g,
+        carbs_g=macros.carbs_g,
+        fat_g=macros.fat_g,
+        generator_mode=generator_mode,
+        meals=[meal.model_dump() for meal in meals],
+        is_saved=False,
+    )
+    db.add(plan)
+    db.commit()
+    db.refresh(plan)
+    return to_plan_response(plan)
 
-        <div class='card'>
-          <h3>Docs</h3>
-          <p><a href='/docs'>/docs</a> · <a href='/redoc'>/redoc</a></p>
-        </div>
-      </body>
-    </html>
-    """
-    return HTMLResponse(content=html)
+
+@app.get("/api/plans", response_model=PlanListResponse)
+def list_plans(db: Session = Depends(get_db)) -> PlanListResponse:
+    plans = db.query(MealPlan).order_by(MealPlan.created_at.desc()).all()
+    return PlanListResponse(plans=[to_plan_response(plan) for plan in plans])
+
+
+@app.get("/api/plans/{plan_id}", response_model=MealPlanResponse)
+def get_plan(plan_id: str, db: Session = Depends(get_db)) -> MealPlanResponse:
+    plan = db.get(MealPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    return to_plan_response(plan)
+
+
+@app.patch("/api/plans/{plan_id}/meals/{meal_index}", response_model=MealPlanResponse)
+def replace_meal(
+    plan_id: str, meal_index: int, db: Session = Depends(get_db)
+) -> MealPlanResponse:
+    plan = db.get(MealPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    if meal_index < 0 or meal_index >= len(plan.meals):
+        raise HTTPException(status_code=400, detail="Meal index out of range")
+    macros = MacroTargets(
+        calories=plan.calories,
+        protein_g=plan.protein_g,
+        carbs_g=plan.carbs_g,
+        fat_g=plan.fat_g,
+    )
+    meals = swap_meal(plan.meals, meal_index, macros, plan.dietary_restrictions)
+    plan.meals = [meal.model_dump() for meal in meals]
+    db.add(plan)
+    db.commit()
+    db.refresh(plan)
+    return to_plan_response(plan)
+
+
+@app.post("/api/plans/{plan_id}/save", response_model=SavePlanResponse)
+def save_plan(plan_id: str, db: Session = Depends(get_db)) -> SavePlanResponse:
+    plan = db.get(MealPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    plan.is_saved = True
+    db.add(plan)
+    db.commit()
+    return SavePlanResponse(id=plan.id, is_saved=True)
+
+
+@app.get("/api/grocery-list/{plan_id}", response_model=GroceryListResponse)
+def grocery_list(plan_id: str, db: Session = Depends(get_db)) -> GroceryListResponse:
+    plan = db.get(MealPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    return GroceryListResponse(plan_id=plan_id, items=build_grocery_list(plan.meals))
