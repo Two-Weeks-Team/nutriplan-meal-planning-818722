@@ -1,0 +1,53 @@
+name: nutriplan-meal-planning-818722
+region: nyc
+features:
+  - buildpack-stack=ubuntu-22
+services:
+  - name: api
+    github:
+      repo: Two-Weeks-Team/nutriplan-meal-planning-818722
+      branch: master
+      deploy_on_push: true
+    source_dir: /api
+    build_command: pip install -r requirements.txt
+    environment_slug: python
+    run_command: uvicorn main:app --host 0.0.0.0 --port 8080
+    http_port: 8080
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    instance_count: 1
+    envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+        value: placeholder
+      - key: DIGITALOCEAN_INFERENCE_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: placeholder
+      - key: DO_INFERENCE_MODEL
+        scope: RUN_TIME
+        value: anthropic-claude-4.6-sonnet
+  - name: web
+    github:
+      repo: Two-Weeks-Team/nutriplan-meal-planning-818722
+      branch: master
+      deploy_on_push: true
+    source_dir: /web
+    environment_slug: node-js
+    build_command: npm ci && npm run build
+    run_command: npm start
+    http_port: 3000
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    instance_count: 1
+ingress:
+  rules:
+    - component:
+        name: api
+      match:
+        path:
+          prefix: /api
+    - component:
+        name: web
+      match:
+        path:
+          prefix: /
