@@ -15,8 +15,8 @@ const body = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Nutriplan Meal Planning",
-  description: "From body stats to a macro-balanced meal day in one click."
+  title: "NutriPlan",
+  description: "Meal planning with macro targets, grocery lists, and meal swaps."
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
