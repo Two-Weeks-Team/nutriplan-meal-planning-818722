@@ -14,10 +14,13 @@ export default function WorkspacePanel() {
     setError("");
     try {
       const data = await generatePlan({
-        query: "Alex Kim, 180 lb, lean bulk, 2900 kcal",
-        preferences: "high-protein, low-prep"
+        weight: 82,
+        unit: "kg",
+        goal: "bulk",
+        meal_count: 5,
+        dietary_restrictions: []
       });
-      setSummary(data.summary || "5 plans generated");
+      setSummary(`${data.meals.length} meals generated for a ${data.goal} plan`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -30,6 +33,7 @@ export default function WorkspacePanel() {
       <div className="flex items-center justify-between">
         <h2 className="font-[--font-display] text-2xl">Meal Plan Studio</h2>
         <button
+          type="button"
           onClick={run}
           className="rounded-md bg-primary px-4 py-2 font-medium text-primary-foreground transition hover:opacity-90"
         >
