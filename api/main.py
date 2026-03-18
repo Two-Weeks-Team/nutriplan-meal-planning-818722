@@ -76,11 +76,13 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/calculate", response_model=MacroTargets)
 @app.post("/api/calculate", response_model=MacroTargets)
 def calculate(payload: PlannerInput) -> MacroTargets:
     return calculate_macros(payload.weight, payload.unit, payload.goal)
 
 
+@app.post("/generate-plan", response_model=MealPlanResponse)
 @app.post("/api/generate-plan", response_model=MealPlanResponse)
 def generate_plan(
     payload: PlannerInput, db: Session = Depends(get_db)
@@ -109,12 +111,14 @@ def generate_plan(
     return to_plan_response(plan)
 
 
+@app.get("/plans", response_model=PlanListResponse)
 @app.get("/api/plans", response_model=PlanListResponse)
 def list_plans(db: Session = Depends(get_db)) -> PlanListResponse:
     plans = db.query(MealPlan).order_by(MealPlan.created_at.desc()).all()
     return PlanListResponse(plans=[to_plan_response(plan) for plan in plans])
 
 
+@app.get("/plans/{plan_id}", response_model=MealPlanResponse)
 @app.get("/api/plans/{plan_id}", response_model=MealPlanResponse)
 def get_plan(plan_id: str, db: Session = Depends(get_db)) -> MealPlanResponse:
     plan = db.get(MealPlan, plan_id)
@@ -123,6 +127,7 @@ def get_plan(plan_id: str, db: Session = Depends(get_db)) -> MealPlanResponse:
     return to_plan_response(plan)
 
 
+@app.patch("/plans/{plan_id}/meals/{meal_index}", response_model=MealPlanResponse)
 @app.patch("/api/plans/{plan_id}/meals/{meal_index}", response_model=MealPlanResponse)
 def replace_meal(
     plan_id: str, meal_index: int, db: Session = Depends(get_db)
@@ -146,6 +151,7 @@ def replace_meal(
     return to_plan_response(plan)
 
 
+@app.post("/plans/{plan_id}/save", response_model=SavePlanResponse)
 @app.post("/api/plans/{plan_id}/save", response_model=SavePlanResponse)
 def save_plan(plan_id: str, db: Session = Depends(get_db)) -> SavePlanResponse:
     plan = db.get(MealPlan, plan_id)
@@ -157,6 +163,7 @@ def save_plan(plan_id: str, db: Session = Depends(get_db)) -> SavePlanResponse:
     return SavePlanResponse(id=plan.id, is_saved=True)
 
 
+@app.get("/grocery-list/{plan_id}", response_model=GroceryListResponse)
 @app.get("/api/grocery-list/{plan_id}", response_model=GroceryListResponse)
 def grocery_list(plan_id: str, db: Session = Depends(get_db)) -> GroceryListResponse:
     plan = db.get(MealPlan, plan_id)
